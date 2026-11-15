@@ -1,0 +1,7 @@
+express
+mysql2
+jsonwebtoken
+bcryptjs
+multer
+csv-parse
+dotenv
