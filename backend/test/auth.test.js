@@ -4,6 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import app from '../src/app.js';
 import { pool } from '../src/db.js';
+import { smsProvider } from '../src/providers/index.js';
 
 const MARIA = '5544999990001';
 const JOAO = '5544999990002';
@@ -31,17 +32,36 @@ const clearOtps = () => pool.query(
   [MARIA, JOAO, ANA]
 );
 
+// A franquia e o log de ocorrências voltam ao estado anterior no fim.
+let savedSettings;
+let lastEventId;
+
 before(async () => {
   await clearOtps();
+  [savedSettings] = await pool.query(
+    "SELECT key_name, value FROM settings WHERE key_name IN ('otp_quota_total', 'otp_quota_used')"
+  );
+  [[{ lastEventId }]] = await pool.query('SELECT COALESCE(MAX(id), 0) AS lastEventId FROM sms_events');
   server = app.listen(0);
   base = `http://localhost:${server.address().port}`;
 });
 
 after(async () => {
   await clearOtps();
+  for (const { key_name, value } of savedSettings) {
+    await pool.query('UPDATE settings SET value = ? WHERE key_name = ?', [value, key_name]);
+  }
+  await pool.query('DELETE FROM sms_events WHERE id > ?', [lastEventId]);
   server.close();
   await pool.end();
 });
+
+const adminToken = async () => (await post('/auth/admin/login', {
+  email: 'admin@brindes.local',
+  password: process.env.ADMIN_PASSWORD || 'admin123',
+})).body.token;
+
+const lastEvent = async (token) => (await get('/admin/otp/events', token)).body[0];
 
 test('telefone fora da base: 404 PHONE_NOT_FOUND', async () => {
   const r = await post('/auth/otp/request', { phone: '5511900000000' });
@@ -111,4 +131,57 @@ test('login do admin: senha errada e e-mail inexistente dão o mesmo erro; senha
   assert.equal(balance.status, 200);
   assert.equal(balance.body.remaining, balance.body.total - balance.body.used);
   assert.equal(typeof balance.body.alert, 'boolean');
+});
+
+test('5 senhas erradas seguidas bloqueiam o e-mail (sem diferenciar maiúsculas)', async () => {
+  const email = 'teste-bloqueio@brindes.local';
+  for (let i = 0; i < 5; i++) {
+    assert.equal((await post('/auth/admin/login', { email, password: 'x' })).status, 401);
+  }
+  const blocked = await post('/auth/admin/login', { email: email.toUpperCase(), password: 'x' });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.error.code, 'ADMIN_LOGIN_BLOCKED');
+});
+
+test('recarga soma 1.000 disparos e fica registrada; cliente não pode recarregar', async () => {
+  const token = await adminToken();
+  const before = (await get('/admin/otp/balance', token)).body;
+
+  const r = await post('/admin/otp/recharge', {}, token);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.total, before.total + 1000);
+
+  const ev = await lastEvent(token);
+  assert.equal(ev.type, 'RECARGA');
+  assert.equal(ev.amount, 1000);
+  assert.equal(ev.adminName, 'Administrador');
+
+  const otp = await post('/auth/otp/request', { phone: MARIA });
+  const customer = await post('/auth/otp/verify', { phone: MARIA, code: otp.body.devCode });
+  assert.equal((await post('/admin/otp/recharge', {}, customer.body.token)).status, 403);
+});
+
+test('falha no SMS responde 503 e registra a ocorrência', async () => {
+  const original = smsProvider.send;
+  smsProvider.send = async () => { throw new Error('provedor fora do ar'); };
+  try {
+    const r = await post('/auth/otp/request', { phone: JOAO });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error.code, 'SMS_UNAVAILABLE');
+  } finally {
+    smsProvider.send = original;
+  }
+  const ev = await lastEvent(await adminToken());
+  assert.equal(ev.type, 'FALHA_ENVIO');
+  assert.equal(ev.detail, 'provedor fora do ar');
+});
+
+test('franquia zerada bloqueia o pedido e registra a ocorrência', async () => {
+  await pool.query(
+    "UPDATE settings SET value = (SELECT v FROM (SELECT value AS v FROM settings WHERE key_name = 'otp_quota_total') t) WHERE key_name = 'otp_quota_used'"
+  );
+  const r = await post('/auth/otp/request', { phone: JOAO });
+  assert.equal(r.status, 503);
+  assert.equal(r.body.error.code, 'OTP_QUOTA_EXHAUSTED');
+  assert.equal((await lastEvent(await adminToken())).type, 'FRANQUIA_ESGOTADA');
 });

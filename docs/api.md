@@ -21,6 +21,8 @@ Rotas protegidas exigem o header `Authorization: Bearer <token>`.
 | GET | /admin/redemptions | Admin | Lista resgates |
 | PATCH | /admin/redemptions/:id/status | Admin | RETIRADO ou CANCELADO |
 | GET | /admin/otp/balance | Admin | Saldo da franquia de SMS |
+| POST | /admin/otp/recharge | Admin | Recarrega a franquia (lote de 1.000) |
+| GET | /admin/otp/events | Admin | Recargas e falhas do SMS |
 
 ## Formatos (preencher conforme cada módulo for implementado)
 
@@ -47,7 +49,14 @@ O cliente não tem senha: receber o código por SMS é o login. O token vale 2 h
 | 429 | OTP_BLOCKED | 3 tentativas erradas; é preciso pedir novo código |
 
 **POST /auth/admin/login** — body `{ "email": "...", "password": "..." }` → `200 { "token": "...", "role": "ADMIN" }`
-Erro: `401 INVALID_CREDENTIALS` "E-mail ou senha inválidos." (o mesmo para e-mail inexistente e senha errada).
+Erros: `401 INVALID_CREDENTIALS` "E-mail ou senha inválidos." (o mesmo para e-mail inexistente e senha errada);
+`429 ADMIN_LOGIN_BLOCKED` após 5 senhas erradas seguidas no mesmo e-mail (bloqueio de 15 min).
 
 **GET /admin/otp/balance** → `200 { "total": 1000, "used": 800, "remaining": 200, "alert": true }`
 `alert` fica `true` quando restam 20% ou menos da franquia.
+
+**POST /admin/otp/recharge** — sem body. Soma 1.000 disparos ao total e devolve o mesmo formato de `/admin/otp/balance`.
+
+**GET /admin/otp/events** → as 50 ocorrências mais recentes:
+`200 [{ "id": 3, "type": "RECARGA", "amount": 1000, "detail": null, "createdAt": "...", "adminName": "Administrador" }]`
+`type`: `RECARGA`, `FRANQUIA_ESGOTADA` (pedido de código bloqueado) ou `FALHA_ENVIO` (erro do provedor em `detail`).
