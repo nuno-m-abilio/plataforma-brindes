@@ -28,7 +28,7 @@ Rotas protegidas exigem o header `Authorization: Bearer <token>`.
 O cliente não tem senha: receber o código por SMS é o login. O token vale 2 h.
 
 **POST /auth/otp/request** — body `{ "phone": "5544999990001" }` (aceita máscara; só os dígitos são usados)
-→ `200 { "message": "Código enviado por SMS.", "devCode": "123456" }` (`devCode` só com `DEV_SHOW_OTP=true`)
+-> `200 { "message": "Código enviado por SMS.", "devCode": "123456" }` (`devCode` só com `DEV_SHOW_OTP=true`)
 
 | Status | code | Quando |
 |---|---|---|
