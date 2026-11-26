@@ -188,6 +188,24 @@ CREATE TABLE email_log (
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------
+-- Ocorrências da mensageria: recargas da franquia (RF57)
+-- e indisponibilidade do SMS (RF59)
+-- -----------------------------------------------------
+CREATE TABLE sms_events (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  type       ENUM('RECARGA','FRANQUIA_ESGOTADA','FALHA_ENVIO') NOT NULL,
+  admin_id   INT UNSIGNED NULL,
+  amount     INT UNSIGNED NULL,
+  detail     VARCHAR(255) NULL,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_sms_events_created (created_at),
+  CONSTRAINT fk_sms_events_admin
+    FOREIGN KEY (admin_id) REFERENCES admins (id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------
 -- Configurações parametrizáveis
 -- -----------------------------------------------------
 CREATE TABLE settings (
