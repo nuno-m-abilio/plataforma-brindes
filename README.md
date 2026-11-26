@@ -26,6 +26,16 @@ Teste da API e do banco: http://localhost:3000/api/health
 - Admin: admin@brindes.local / senha definida em ADMIN_PASSWORD no .env
 - Clientes: telefones 5544999990001, 5544999990002, 5544999990003
 
+## Login
+- Cliente: informe o telefone; o código de 6 dígitos aparece no terminal do servidor
+  (SMS simulado) e, com `DEV_SHOW_OTP=true`, também na resposta da API (`devCode`).
+- Admin: e-mail e senha acima. Contrato completo em docs/api.md.
+
+## Testes
+    cd backend
+    npm run db:setup            (os testes usam os dados do seed)
+    npm test
+
 ## Estrutura
 - frontend/  páginas HTML/CSS/JS puro
 - backend/   API Node.js + Express + MySQL
