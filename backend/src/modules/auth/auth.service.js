@@ -44,14 +44,16 @@ export async function requestOtp(phone) {
   // Franquia e OTP na mesma transação: com saldo zero nada é gravado nem enviado (RF58).
   const quota = await withTransaction(async (conn) => {
     const q = await repo.getQuota(conn, { lock: true });
-    if (q.used >= q.total) {
-      throw new AppError(503, 'OTP_QUOTA_EXHAUSTED',
-        'No momento não é possível enviar o código. Tente novamente mais tarde.');
-    }
+    if (q.used >= q.total) return null;
     await repo.incrementQuotaUsed(conn);
     await repo.insertOtp(conn, customer.id, sha256(code), otpTtlMinutes);
     return { ...q, used: q.used + 1 };
   });
+  if (!quota) {
+    await repo.insertSmsEvent({ type: 'FRANQUIA_ESGOTADA', detail: 'Pedido de código bloqueado' });
+    throw new AppError(503, 'OTP_QUOTA_EXHAUSTED',
+      'No momento não é possível enviar o código. Tente novamente mais tarde.');
+  }
 
   const remaining = quota.total - quota.used;
   if (remaining <= quota.total * quota.alertPct / 100) {
@@ -61,8 +63,9 @@ export async function requestOtp(phone) {
   try {
     await smsProvider.send(normalized, `Seu código da Plataforma de Brindes: ${code}`);
   } catch (err) {
-    // shortcut: o crédito já foi consumido e a falha só vai para o log; registrar em tabela (RF59) se o SMS real for implantado.
+    // O crédito já foi consumido: provedores reais costumam cobrar a tentativa mesmo assim.
     console.error('[SMS] Falha no envio:', err);
+    await repo.insertSmsEvent({ type: 'FALHA_ENVIO', detail: String(err?.message ?? err) });
     throw new AppError(503, 'SMS_UNAVAILABLE',
       'Não foi possível enviar o código agora. Tente novamente mais tarde.');
   }
@@ -95,12 +98,31 @@ export async function verifyOtp(phone, code) {
   return { token: signToken({ id: customer.id, role: 'CUSTOMER' }), role: 'CUSTOMER' };
 }
 
+// Erros de senha por e-mail: { failures, blockedUntil }.
+// shortcut: em memória, zera ao reiniciar e não é compartilhado entre processos; mover para o banco se houver mais de uma instância.
+const adminFailures = new Map();
+
 export async function adminLogin(email, password) {
-  const admin = typeof email === 'string' && await repo.findActiveAdminByEmail(email.trim());
+  const key = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const { adminLoginMaxFailures, adminLoginBlockMinutes } = config.rules;
+
+  const entry = adminFailures.get(key);
+  if (entry?.blockedUntil > Date.now()) {
+    throw new AppError(429, 'ADMIN_LOGIN_BLOCKED',
+      `Muitas tentativas. Tente novamente em ${adminLoginBlockMinutes} minutos.`);
+  }
+
+  const admin = key && await repo.findActiveAdminByEmail(key);
   const ok = await bcrypt.compare(String(password ?? ''), admin ? admin.passwordHash : DUMMY_HASH);
   if (!admin || !ok) {
+    const failures = (entry?.blockedUntil ? 0 : entry?.failures ?? 0) + 1;
+    adminFailures.set(key, failures >= adminLoginMaxFailures
+      ? { failures, blockedUntil: Date.now() + adminLoginBlockMinutes * 60_000 }
+      : { failures });
     throw new AppError(401, 'INVALID_CREDENTIALS', 'E-mail ou senha inválidos.');
   }
+
+  adminFailures.delete(key);
   return { token: signToken({ id: admin.id, role: 'ADMIN' }), role: 'ADMIN' };
 }
 
@@ -109,3 +131,15 @@ export async function getOtpBalance() {
   const remaining = Math.max(total - used, 0);
   return { total, used, remaining, alert: remaining <= total * alertPct / 100 };
 }
+
+// Soma um lote de disparos à franquia e registra quem recarregou (RF57).
+export async function rechargeOtpQuota(adminId) {
+  const amount = config.rules.smsRechargeBatch;
+  await withTransaction(async (conn) => {
+    await repo.addQuotaTotal(conn, amount);
+    await repo.insertSmsEvent({ type: 'RECARGA', adminId, amount }, conn);
+  });
+  return getOtpBalance();
+}
+
+export const listSmsEvents = () => repo.listSmsEvents(50);

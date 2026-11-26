@@ -70,6 +70,30 @@ export async function markOtpUsed(otpId) {
   return result.affectedRows === 1;
 }
 
+export async function addQuotaTotal(conn, amount) {
+  await conn.query(
+    "UPDATE settings SET value = CAST(value AS UNSIGNED) + ? WHERE key_name = 'otp_quota_total'",
+    [amount]
+  );
+}
+
+export async function insertSmsEvent({ type, adminId = null, amount = null, detail = null }, conn = pool) {
+  await conn.query(
+    'INSERT INTO sms_events (type, admin_id, amount, detail) VALUES (?, ?, ?, ?)',
+    [type, adminId, amount, detail?.slice(0, 255) ?? null]
+  );
+}
+
+export async function listSmsEvents(limit) {
+  const [rows] = await pool.query(
+    `SELECT e.id, e.type, e.amount, e.detail, e.created_at AS createdAt, a.name AS adminName
+       FROM sms_events e LEFT JOIN admins a ON a.id = e.admin_id
+      ORDER BY e.id DESC LIMIT ?`,
+    [limit]
+  );
+  return rows;
+}
+
 export async function findActiveAdminByEmail(email) {
   const [rows] = await pool.query(
     'SELECT id, password_hash AS passwordHash FROM admins WHERE email = ? AND active = 1',

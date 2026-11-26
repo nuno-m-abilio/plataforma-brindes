@@ -22,4 +22,12 @@ router.get('/admin/otp/balance', authenticate, authorize('ADMIN'), async (req, r
   res.json(await service.getOtpBalance());
 });
 
+router.post('/admin/otp/recharge', authenticate, authorize('ADMIN'), async (req, res) => {
+  res.json(await service.rechargeOtpQuota(req.user.id));
+});
+
+router.get('/admin/otp/events', authenticate, authorize('ADMIN'), async (req, res) => {
+  res.json(await service.listSmsEvents());
+});
+
 export default router;
