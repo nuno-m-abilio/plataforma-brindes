@@ -23,6 +23,11 @@ export const config = {
     brlPerPoint: 100,        // 1 ponto a cada R$ 100,00
     otpTtlMinutes: 5,
     otpMaxAttempts: 3,
+    otpRequestLimit: 3,          // pedidos de código por telefone...
+    otpRequestWindowMinutes: 10, // ...dentro desta janela
+    smsRechargeBatch: 1000,      // cada recarga soma este número de disparos
+    adminLoginMaxFailures: 5,    // erros de senha seguidos antes de bloquear...
+    adminLoginBlockMinutes: 15,  // ...por este tempo
     jwtExpiresIn: '2h',
     pickupDeadlineDays: 30,
   },
